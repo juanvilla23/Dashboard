@@ -11,8 +11,6 @@ DIMENSIONES = {
     "Edad": "AGE_YEARS",
     "Educación": "NAME_EDUCATION_TYPE",
     "Tipo de ingreso": "NAME_INCOME_TYPE",
-    "Historial de buró": "no_bureau_history",
-    "Rango de crédito": "EXT_SOURCE_MEAN",
 }
 
 ETIQUETAS_EDUCACION = {
@@ -191,19 +189,16 @@ def crear_grafica(
 
     fig = go.Figure()
     fig.add_trace(
-        go.Scatter(
+        go.Bar(
             x=df["segmento"].astype(str),
             y=df[columna],
-            mode="lines+markers",
             name=configuracion["eje_y"],
-            line={"color": "#e53935", "width": 3},
+            text=df[columna].round(1),
+            textposition="outside",
             marker={
-                "size": 9,
-                "color": "#e53935",
+                "color": "rgba(229, 57, 53, 0.75)",
                 "line": {"color": "#ff6659", "width": 1},
             },
-            fill="tozeroy",
-            fillcolor="rgba(229, 57, 53, 0.06)",
             customdata=df[
                 ["total_clientes", "clientes_default", "tasa_default_pct", "participacion_defaults_pct"]
             ],
@@ -222,6 +217,7 @@ def crear_grafica(
     fig.update_layout(
         height=420,
         margin={"l": 10, "r": 10, "t": 20, "b": 10},
+        bargap=0.28,
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font={"color": "#9aa3af", "family": "Inter, Arial, sans-serif", "size": 12},
@@ -291,14 +287,6 @@ def render_vista_1() -> None:
                 "Canal",
                 ["Todos los clientes", "Con historial", "Sin historial"],
                 index=0,
-            )
-            st.number_input(
-                "Mínimo de clientes",
-                min_value=1,
-                max_value=10000,
-                value=100,
-                step=50,
-                key="minimo_clientes_v1",
             )
 
         df_filtrado = _aplicar_filtro_historial(df_base, historial_bureau)
