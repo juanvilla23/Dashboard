@@ -2,6 +2,23 @@ import streamlit as st
 
 from ui.render import render_html
 from views.vista_1 import render_vista_1
+from views.vista_2 import render_vista_2
+from views.vista_3 import render_vista_3
+from views.vista_4 import render_vista_4
+
+VIEWS = [
+    {"id": "1", "icon": "▥", "title": "Vista 1", "subtitle": "Riesgo y volumen"},
+    {"id": "2", "icon": "↗", "title": "Vista 2", "subtitle": "Conducta crediticia"},
+    {"id": "3", "icon": "◔", "title": "Vista 3", "subtitle": "Simulador de corte"},
+    {"id": "4", "icon": "◎", "title": "Vista 4", "subtitle": "Perfilador de riesgo"},
+]
+
+VIEW_RENDERERS = {
+    "1": render_vista_1,
+    "2": render_vista_2,
+    "3": render_vista_3,
+    "4": render_vista_4,
+}
 
 
 st.set_page_config(
@@ -98,45 +115,17 @@ render_html(
         line-height: 1.8;
     }
 
-    .top-header {
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        gap: 12px;
-        margin-bottom: 14px;
-    }
-
-    .date-pill {
-        background: #1a1a1a;
-        border: 1px solid rgba(255,255,255,0.10);
-        border-radius: 8px;
-        padding: 9px 14px;
-        color: #d1d5db;
-        font-size: 13px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-
-    .export-btn {
-        background: #1a1a1a;
-        border: 1px solid rgba(255,255,255,0.10);
-        border-radius: 8px;
-        padding: 9px 16px;
-        color: #d1d5db;
-        font-size: 13px;
-        cursor: pointer;
-    }
-
     .view-tabs {
         display: flex;
+        flex-wrap: wrap;
         gap: 14px;
         margin-bottom: 10px;
     }
 
     .view-card {
         flex: 1;
-        max-width: 280px;
+        min-width: 160px;
+        max-width: calc(25% - 11px);
         min-height: 78px;
         padding: 14px 16px;
         border-radius: 10px 10px 0 0;
@@ -421,32 +410,9 @@ def render_sidebar() -> None:
         )
 
 
-def render_header() -> None:
-    col_spacer, col_date, col_export = st.columns([5.5, 2.2, 1])
-
-    with col_date:
-        render_html(
-            """
-            <div class="date-pill">
-                <span>📅</span>
-                <span>01 may. 2024 – 31 may. 2024</span>
-            </div>
-            """
-        )
-
-    with col_export:
-        st.button("⬇ Exportar", use_container_width=True)
-
-
 def render_view_tabs(active_view: str) -> str:
-    views = [
-        {"id": "1", "icon": "◎", "title": "Vista 1", "subtitle": "Riesgo y volumen"},
-        {"id": "2", "icon": "↗", "title": "Vista 2", "subtitle": "Score externo y perfil"},
-        {"id": "3", "icon": "◔", "title": "Vista 3", "subtitle": "Simulador de corte"},
-    ]
-
     cards = []
-    for view in views:
+    for view in VIEWS:
         active_class = "active" if active_view == view["id"] else ""
         cards.append(
             f"""
@@ -488,16 +454,9 @@ def render_placeholder(view_number: str, title: str) -> None:
 
 
 render_sidebar()
-render_header()
 
 active_view = str(st.query_params.get("view", "1"))
 active_view = render_view_tabs(active_view)
 
-if active_view == "1":
-    render_vista_1()
-elif active_view == "2":
-    render_placeholder("2", "Score externo y perfil del cliente")
-elif active_view == "3":
-    render_placeholder("3", "Simulador de punto de corte")
-else:
-    render_vista_1()
+render_view = VIEW_RENDERERS.get(active_view, render_vista_1)
+render_view()
