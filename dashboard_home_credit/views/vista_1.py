@@ -9,12 +9,10 @@ from views.segmentacion import (
     METRICAS,
     agrupar_por_dimension,
     aplicar_filtro_historial,
-    calcular_kpis,
     calcular_tasa_general_default,
     cargar_datos,
     crear_grafica_barras,
     obtener_configuracion_metrica,
-    render_kpi_card,
 )
 
 
@@ -48,13 +46,6 @@ def render_vista_1() -> None:
 
         df_filtrado = aplicar_filtro_historial(df_base, historial_bureau)
         tasa_general = calcular_tasa_general_default(df_filtrado)
-        kpis = calcular_kpis(df_filtrado)
-
-        with st.container(border=True):
-            render_html('<div class="panel-title">Indicadores clave</div>')
-            render_kpi_card("$", "Solicitudes analizadas", kpis["solicitudes"], "+0.0% ↑")
-            render_kpi_card("↗", "Tasa general de default", kpis["tasa_default"], "+0.0% ↑")
-            render_kpi_card("◎", "Clientes en default", kpis["clientes_default"], "-0.0% ↓")
 
     with col_grafica:
         configuracion = obtener_configuracion_metrica(metrica)

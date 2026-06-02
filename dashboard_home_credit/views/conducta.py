@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from logic_v1 import BASE_RATE, SCORE_P33, SCORE_P66, lift_color
+from ui.theme import plotly_colors
 from views.segmentacion import anadir_linea_tasa_general, colores_barras_tasa_default
 
 BASE_RATE_PCT = BASE_RATE * 100
@@ -30,7 +31,7 @@ VARIABLES_CONDUCTA = {
         "columna": "prev_app_count",
         "descripcion": "Historial de solicitudes anteriores en la entidad",
     },
-    "Apalancamiento": {
+    "Endeudamiento": {
         "columna": "bureau_debt_ratio",
         "descripcion": "Ratio deuda total / crédito en buró (winsorizado)",
     },
@@ -68,7 +69,7 @@ def _banda_rechazo(valores: pd.Series) -> pd.Series:
     )
 
 
-def _banda_apalancamiento(valores: pd.Series) -> pd.Series:
+def _banda_endeudamiento(valores: pd.Series) -> pd.Series:
     limpio = valores.clip(valores.quantile(0.01), valores.quantile(0.99))
     return pd.qcut(
         limpio.rank(method="first"),
@@ -112,7 +113,7 @@ def crear_bandas(df: pd.DataFrame, nombre_variable: str) -> pd.Series:
         return _banda_solicitudes(valores)
     if nombre_variable == "Tasa de rechazo previa":
         return _banda_rechazo(valores)
-    return _banda_apalancamiento(valores)
+    return _banda_endeudamiento(valores)
 
 
 def agrupar_curva_riesgo(df: pd.DataFrame, nombre_variable: str) -> pd.DataFrame:
@@ -205,129 +206,14 @@ def _fmt_clientes_celda(n: int) -> str:
 def estilos_matriz_html() -> str:
     return """
     <style>
-    .v2-matrices-wrap { display: flex; flex-wrap: wrap; gap: 16px; width: 100%; }
-    .v2-matriz-panel {
-        flex: 1 1 280px;
-        background: #161616;
-        border: 1px solid rgba(255,255,255,0.1);
-        border-radius: 12px;
-        padding: 14px 12px 16px;
-        min-width: 0;
-    }
-    .v2-matriz-titulo {
-        color: #ffffff;
-        font-size: 15px;
-        font-weight: 700;
-        text-align: center;
-        margin: 0 0 14px 0;
-        letter-spacing: 0.01em;
-    }
-    .v2-matriz-outer {
-        display: grid;
-        grid-template-columns: 42px minmax(0, 1fr);
-        gap: 0 12px;
-        align-items: stretch;
-    }
-    .v2-eje-y-label {
-        writing-mode: vertical-rl;
-        transform: rotate(180deg);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 13px;
-        font-weight: 600;
-        color: #c6ced8;
-        letter-spacing: 0.02em;
-        padding: 4px 0;
-        align-self: center;
-    }
-    .v2-matriz-main {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        min-width: 0;
-    }
-    .v2-eje-x-label {
-        text-align: center;
-        font-size: 13px;
-        font-weight: 600;
-        color: #c6ced8;
-        letter-spacing: 0.02em;
-        padding: 0 8px 4px;
-        border-bottom: 1px solid rgba(255,255,255,0.08);
-    }
-    .v2-matriz-grid {
-        display: grid;
-        grid-template-columns: 72px repeat(3, minmax(0, 1fr));
-        gap: 9px;
-        align-items: stretch;
-    }
-    .v2-matriz-corner {
-        min-height: 4px;
-    }
-    .v2-matriz-col-head {
-        text-align: center;
-        font-size: 14px;
-        font-weight: 700;
-        color: #e5e7eb;
-        padding: 6px 2px 4px;
-    }
-    .v2-matriz-row-head {
-        display: flex;
-        align-items: center;
-        justify-content: flex-end;
-        padding-right: 10px;
-        font-size: 14px;
-        font-weight: 700;
-        color: #e5e7eb;
-    }
-    .v2-celda {
-        border-radius: 10px;
-        padding: 12px 8px 10px;
-        text-align: center;
-        min-height: 86px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        gap: 3px;
-        border: 1px solid rgba(255,255,255,0.06);
-        transition: transform 0.12s ease;
-    }
     .v2-celda:hover { transform: scale(1.02); z-index: 1; }
-    .v2-celda-tasa {
-        font-size: 20px;
-        font-weight: 700;
-        line-height: 1.15;
-        letter-spacing: -0.02em;
-    }
-    .v2-celda-lift {
-        font-size: 14px;
-        font-weight: 600;
-        font-family: ui-monospace, 'Cascadia Code', monospace;
-        opacity: 0.95;
-    }
-    .v2-celda-n {
-        font-size: 12px;
-        color: #b0b8c4;
-        margin-top: 2px;
-        font-family: ui-monospace, 'Cascadia Code', monospace;
-    }
-    .v2-celda-vacia {
-        background: rgba(255,255,255,0.04) !important;
-        border-style: dashed;
-        border-color: rgba(255,255,255,0.08);
-        color: #4b5563;
-        font-size: 22px;
-        font-weight: 300;
-    }
     .v2-matriz-leyenda {
         display: flex;
         flex-wrap: wrap;
         gap: 10px 16px;
         margin-top: 14px;
         font-size: 12px;
-        color: #9aa3af;
+        color: var(--text-secondary);
     }
     .v2-matriz-leyenda span { display: inline-flex; align-items: center; gap: 5px; }
     .v2-leyenda-punto { width: 10px; height: 10px; border-radius: 3px; }
@@ -443,15 +329,16 @@ def crear_grafica_curva(
             name="Tasa de impago",
         )
     )
+    colors = plotly_colors()
     fig.update_layout(
         height=360,
         margin={"l": 10, "r": 10, "t": 20, "b": 10},
         bargap=0.25,
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font={"color": "#9aa3af", "size": 12},
-        xaxis={"title": nombre_variable, "tickangle": -20},
-        yaxis={"title": "Tasa de impago (%)", "gridcolor": "rgba(255,255,255,0.08)"},
+        font={"color": colors["font"], "size": 12},
+        xaxis={"title": nombre_variable, "tickangle": -20, "linecolor": colors["line"]},
+        yaxis={"title": "Tasa de impago (%)", "gridcolor": colors["grid"]},
         showlegend=False,
     )
 

@@ -23,12 +23,7 @@ from logic_v1 import (
     selection_from_display,
 )
 from ui.render import render_html
-
-CAUSALITY_NOTE = (
-    "Las tasas son correlaciones observacionales. No hay aleatorización. "
-    "Existen confusores no controlados (tipo de producto, canal, región). "
-    "Útil para segmentación y priorización, no para inferir mecanismos causales."
-)
+from ui.theme import plotly_colors
 
 MULTISELECT_PLACEHOLDER = "Selecciona opciones"
 
@@ -39,108 +34,6 @@ BASE_RATE_PCT = BASE_RATE * 100
 
 def _fmt_num(n: int) -> str:
     return f"{n:,}".replace(",", ".")
-
-
-def _render_perfilador_styles() -> None:
-    render_html(
-        """
-        <style>
-        .v4-metrics-row {
-            display: grid;
-            grid-template-columns: repeat(5, 1fr);
-            gap: 10px;
-            margin-bottom: 14px;
-        }
-        .v4-metric {
-            background: #141414;
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 10px;
-            padding: 12px 14px;
-            min-height: 78px;
-        }
-        .v4-metric-label {
-            color: #9aa3af;
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.03em;
-        }
-        .v4-metric-value {
-            font-size: 22px;
-            font-weight: 700;
-            margin-top: 4px;
-            line-height: 1.2;
-        }
-        .v4-metric-sub {
-            color: #9aa3af;
-            font-size: 11px;
-            margin-top: 4px;
-        }
-        .v4-rate-bar-wrap {
-            background: #141414;
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 10px;
-            padding: 14px 16px 10px;
-            margin-bottom: 14px;
-        }
-        .v4-rate-bar-title {
-            color: #9aa3af;
-            font-size: 12px;
-            margin-bottom: 10px;
-        }
-        .v4-rate-track {
-            position: relative;
-            height: 22px;
-            background: rgba(255,255,255,0.06);
-            border-radius: 4px;
-            overflow: visible;
-        }
-        .v4-rate-fill {
-            height: 100%;
-            border-radius: 4px;
-            max-width: 100%;
-        }
-        .v4-rate-marker {
-            position: absolute;
-            top: -4px;
-            width: 2px;
-            height: 30px;
-            background: rgba(255,255,255,0.85);
-            transform: translateX(-50%);
-        }
-        .v4-rate-scale {
-            display: flex;
-            justify-content: space-between;
-            color: #6b7280;
-            font-size: 10px;
-            font-family: ui-monospace, 'Cascadia Code', monospace;
-            margin-top: 8px;
-        }
-        .v4-lift-legend {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px 14px;
-            margin-top: 8px;
-            font-size: 11px;
-            color: #9aa3af;
-        }
-        .v4-lift-legend span {
-            display: inline-flex;
-            align-items: center;
-            gap: 5px;
-        }
-        .v4-lift-dot {
-            width: 10px;
-            height: 10px;
-            border-radius: 2px;
-            display: inline-block;
-        }
-        @media (max-width: 1100px) {
-            .v4-metrics-row { grid-template-columns: repeat(2, 1fr); }
-        }
-        </style>
-        """
-    )
 
 
 def _render_metric_card(label: str, value: str, color: str, subtitle: str = "") -> str:
@@ -156,21 +49,20 @@ def _render_metric_card(label: str, value: str, color: str, subtitle: str = "") 
 
 def _render_metrics_row(stats: dict) -> None:
     color = lift_color(stats["lift"])
-    delta_sign = "+" if stats["delta_pp"] >= 0 else ""
+    text_primary = plotly_colors()["text_primary"]
     cards = [
         _render_metric_card("Tasa de impago", f"{stats['rate'] * 100:.1f}%", color),
         _render_metric_card(
             "Índice vs base",
             f"{stats['lift']:.2f}×",
             color,
-            f"{delta_sign}{stats['delta_pp']:.1f} p.p. frente al 8,07%",
         ),
-        _render_metric_card("Clientes", _fmt_num(stats["n"]), "#ffffff"),
-        _render_metric_card("% de la cartera", f"{stats['pct_cartera'] * 100:.1f}%", "#ffffff"),
+        _render_metric_card("Clientes", _fmt_num(stats["n"]), text_primary),
+        _render_metric_card("% de la cartera", f"{stats['pct_cartera'] * 100:.1f}%", text_primary),
         _render_metric_card(
             "% de los impagos",
             f"{stats['pct_defaults'] * 100:.1f}%",
-            "#ffffff",
+            text_primary,
             f"{_fmt_num(stats['defaults'])} impagos",
         ),
     ]
@@ -187,7 +79,7 @@ def _render_rate_bar(stats: dict) -> None:
         f"""
         <div class="v4-rate-bar-wrap">
             <div class="v4-rate-bar-title">
-                Tasa del segmento vs cartera base (8,07%) — escala 0–30%
+                (8,07%)
                 &nbsp;·&nbsp; <span style="color:{color};">{lift_label(stats['lift'])}</span>
             </div>
             <div class="v4-rate-track">
@@ -226,22 +118,23 @@ def _create_breakdown_chart(rows, dim: str) -> go.Figure:
     labels = [display_value(dim, v) for v in rows[dim].astype(str).tolist()]
 
     rates_pct = (rows["rate"] * 100).tolist()
-    colors = [lift_color(lift) for lift in rows["lift"]]
+    bar_colors = [lift_color(lift) for lift in rows["lift"]]
     opacities = [0.38 if low else 1.0 for low in rows["low_n"]]
 
     fig = go.Figure()
+    theme = plotly_colors()
     fig.add_trace(
         go.Bar(
             y=labels,
             x=rates_pct,
             orientation="h",
-            marker={"color": colors, "opacity": opacities, "line": {"width": 0}},
+            marker={"color": bar_colors, "opacity": opacities, "line": {"width": 0}},
             text=[f"{r:.1f}%" for r in rates_pct],
             textposition="outside",
             textfont={
                 "family": "ui-monospace, Cascadia Code, monospace",
                 "size": 11,
-                "color": "#c6ced8",
+                "color": theme["bar_label"],
             },
             customdata=list(zip(rows["lift"], rows["n"], rows["defaults"])),
             hovertemplate=(
@@ -258,13 +151,13 @@ def _create_breakdown_chart(rows, dim: str) -> go.Figure:
     fig.add_vline(
         x=BASE_RATE_PCT,
         line_dash="dash",
-        line_color="rgba(255, 255, 255, 0.75)",
+        line_color=theme["ref_line"],
         line_width=1.5,
         annotation_text=f"Base: {BASE_RATE_PCT:.2f}%",
         annotation_position="top",
-        annotation_font_color="#e0e0e0",
+        annotation_font_color=theme["annotation_text"],
         annotation_font_size=11,
-        annotation_bgcolor="rgba(26, 26, 26, 0.85)",
+        annotation_bgcolor=theme["annotation_bg"],
     )
 
     x_max = max(max(rates_pct) * 1.15, BASE_RATE_PCT * 1.4, 15) if rates_pct else 20
@@ -274,10 +167,10 @@ def _create_breakdown_chart(rows, dim: str) -> go.Figure:
         margin={"l": 8, "r": 48, "t": 28, "b": 8},
         paper_bgcolor=PAPER_BG,
         plot_bgcolor=PLOT_BG,
-        font={"color": "#9aa3af", "family": "Inter, Arial, sans-serif", "size": 12},
+        font={"color": theme["font"], "family": "Inter, Arial, sans-serif", "size": 12},
         xaxis={
             "title": "Tasa de impago (%)",
-            "gridcolor": "rgba(255,255,255,0.08)",
+            "gridcolor": theme["grid"],
             "griddash": "dot",
             "zeroline": False,
             "range": [0, x_max],
@@ -325,8 +218,6 @@ def render_vista_4() -> None:
         st.error(f"No se encontró el archivo de datos: {DATA_PATH.name}")
         return
 
-    _render_perfilador_styles()
-
     df = load_and_bin()
     cube = build_cube(df)
 
@@ -357,9 +248,6 @@ def render_vista_4() -> None:
                     placeholder=MULTISELECT_PLACEHOLDER,
                 )
                 selection[dim] = selection_from_display(dim, chosen_display, opts)
-
-        with st.expander("Nota metodológica", expanded=False):
-            st.caption(CAUSALITY_NOTE)
 
     filtered = apply_filters(cube, selection)
     stats = segment_stats(filtered)
@@ -402,7 +290,3 @@ def render_vista_4() -> None:
                         config={"displayModeBar": False, "responsive": True},
                     )
                     _render_lift_legend()
-
-        render_html(
-            f'<div class="chart-footer" style="margin-top:12px;">ⓘ {CAUSALITY_NOTE}</div>'
-        )

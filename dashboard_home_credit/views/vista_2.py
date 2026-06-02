@@ -19,10 +19,8 @@ from views.conducta import (
 from views.segmentacion import (
     DATA_PATH,
     aplicar_filtro_historial,
-    calcular_kpis,
     calcular_tasa_general_default,
     cargar_datos,
-    render_kpi_card,
 )
 
 
@@ -41,7 +39,10 @@ def render_vista_2() -> None:
                 <div class="panel-title" style="margin-bottom:4px;">
                     Comportamiento crediticio previo
                 </div>
-                <div class="panel-subtitle" style="margin:0 0 12px 0;">
+                <div class="panel-subtitle" style="margin:0 0 6px 0;">
+                    Gráfica de barras
+                </div>
+                <div class="v2-section-hint">
                     Curva de riesgo por variable de conducta
                 </div>
                 """
@@ -72,11 +73,20 @@ def render_vista_2() -> None:
                 key="minimo_clientes_v2",
             )
 
+        render_html('<div class="v2-controls-spacer"></div>')
+        render_html('<div class="v2-section-separator">Matriz</div>')
+
         with st.container(border=True):
             render_html(
                 """
-                <div class="panel-title" style="margin-bottom:8px;">
+                <div class="panel-title" style="margin-bottom:4px;">
                     Matriz rechazo × solicitudes
+                </div>
+                <div class="panel-subtitle" style="margin:0 0 6px 0;">
+                    Tabla de calor
+                </div>
+                <div class="v2-section-hint">
+                    Rechazo previo × nº de solicitudes (y dimensión opcional)
                 </div>
                 """
             )
@@ -100,13 +110,6 @@ def render_vista_2() -> None:
 
         df_filtrado = aplicar_filtro_historial(df_base, historial_bureau)
         tasa_general = calcular_tasa_general_default(df_filtrado)
-        kpis = calcular_kpis(df_filtrado)
-
-        with st.container(border=True):
-            render_html('<div class="panel-title">Resumen global</div>')
-            render_kpi_card("$", "Solicitudes", kpis["solicitudes"], "—")
-            render_kpi_card("↗", "Tasa de impago", kpis["tasa_default"], "—")
-            render_kpi_card("◎", "Impagos", kpis["clientes_default"], "—")
 
     with col_grafica:
         df_curva = agrupar_curva_riesgo(df_filtrado, variable)
@@ -185,53 +188,3 @@ def render_vista_2() -> None:
                     for banda in BANDAS_SCORE_MATRIZ
                 ]
                 render_html(crear_matrices_html(paneles, minimo_celda))
-
-            render_html(
-                """
-                <div class="chart-footer" style="margin-top:14px;">
-                    ⓘ &nbsp; Filas: <strong>tasa de rechazo previa</strong> (0% → 75-100%).
-                    Columnas: <strong>nº de solicitudes previas</strong> (1-2, 3-5, 6+).
-                    El color del índice usa la misma escala que el perfilador (base 8,07%).
-                    Celdas con «—» tienen menos clientes que el mínimo configurado.
-                </div>
-                """
-            )
-
-        with st.expander("Tabla — curva de riesgo por banda"):
-            tabla_curva = df_curva.copy()
-            tabla_curva["tasa_default_pct"] = tabla_curva["tasa_default_pct"].round(2)
-            st.dataframe(
-                tabla_curva.rename(
-                    columns={
-                        "segmento": "Banda",
-                        "total_clientes": "Clientes",
-                        "clientes_default": "Impagos",
-                        "tasa_default_pct": "Tasa (%)",
-                    }
-                ),
-                use_container_width=True,
-                hide_index=True,
-            )
-
-        with st.expander("Tabla — matriz rechazo × solicitudes"):
-            filtro_tabla = None
-            if tercera_dim == "buro":
-                filtro_tabla = st.selectbox(
-                    "Corte para tabla",
-                    GRUPOS_BURO_MATRIZ,
-                    key="v2_tabla_buro",
-                )
-            elif tercera_dim == "score":
-                filtro_tabla = st.selectbox(
-                    "Corte para tabla",
-                    opciones_filtro_tercera(df_filtrado, tercera_dim),
-                    key="v2_tabla_score",
-                )
-
-            matriz_tabla = agrupar_matriz(
-                df_filtrado,
-                tercera_dim,
-                filtro_tercera=filtro_tabla,
-                minimo_celda=minimo_celda,
-            )
-            st.dataframe(matriz_tabla, use_container_width=True, hide_index=True)

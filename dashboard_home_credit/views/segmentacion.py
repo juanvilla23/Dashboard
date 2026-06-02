@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from ui.render import render_html
+from ui.theme import plotly_colors
 
 DATA_PATH = Path(__file__).resolve().parent.parent / "train_selected_features.parquet"
 
@@ -386,17 +387,37 @@ def colores_destacar_maximo(valores: pd.Series) -> tuple[list[str], list[int]]:
 
 
 def anadir_linea_tasa_general(fig: go.Figure, tasa_base: float) -> None:
+    colors = plotly_colors()
     fig.add_hline(
         y=tasa_base,
         line_dash="dash",
-        line_color="rgba(255, 255, 255, 0.75)",
+        line_color=colors["ref_line"],
         line_width=1.5,
         annotation_text=f"Tasa general: {tasa_base:.1f}%",
         annotation_position="top right",
-        annotation_font_color="#e0e0e0",
+        annotation_font_color=colors["annotation_text"],
         annotation_font_size=12,
-        annotation_bgcolor="rgba(26, 26, 26, 0.85)",
+        annotation_bgcolor=colors["annotation_bg"],
     )
+
+
+def render_indicadores_clave(df: pd.DataFrame | None = None) -> None:
+    """Panel global de KPIs (debajo de las pestañas de vista)."""
+    if df is None:
+        if not DATA_PATH.exists():
+            return
+        df = cargar_datos()
+
+    kpis = calcular_kpis(df)
+    with st.container(border=True):
+        render_html('<div class="panel-title" style="margin-bottom:4px;">Indicadores clave</div>')
+        col1, col2, col3 = st.columns(3, gap="medium")
+        with col1:
+            render_kpi_card("$", "Solicitudes analizadas", kpis["solicitudes"], "+0.0% ↑")
+        with col2:
+            render_kpi_card("↗", "Tasa general de default", kpis["tasa_default"], "+0.0% ↑")
+        with col3:
+            render_kpi_card("◎", "Clientes en default", kpis["clientes_default"], "-0.0% ↓")
 
 
 def render_kpi_card(icon: str, label: str, value: str, delta: str) -> None:
@@ -477,26 +498,27 @@ def crear_grafica_barras(
         )
     )
 
+    colors = plotly_colors()
     fig.update_layout(
         height=440,
         margin={"l": 10, "r": 10, "t": 20, "b": 10},
         bargap=0.28,
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font={"color": "#9aa3af", "family": "Inter, Arial, sans-serif", "size": 12},
+        font={"color": colors["font"], "family": "Inter, Arial, sans-serif", "size": 12},
         xaxis={
             "title": TITULOS_EJE_X.get(dimension or "", ""),
             "showgrid": False,
             "tickangle": -30,
-            "linecolor": "rgba(255,255,255,0.12)",
-            "tickfont": {"color": "#9aa3af"},
+            "linecolor": colors["line"],
+            "tickfont": {"color": colors["font"]},
         },
         yaxis={
             "title": configuracion["eje_y"],
-            "gridcolor": "rgba(255,255,255,0.08)",
+            "gridcolor": colors["grid"],
             "griddash": "dot",
             "zeroline": False,
-            "tickfont": {"color": "#9aa3af"},
+            "tickfont": {"color": colors["font"]},
             "ticksuffix": "%" if sufijo == "%" else "",
         },
         showlegend=False,

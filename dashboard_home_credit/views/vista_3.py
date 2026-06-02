@@ -3,40 +3,60 @@
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 
 from ui.render import render_html
-from views.segmentacion import DATA_PATH, cargar_datos, formatear_porcentaje
+from ui.theme import color_rgba, plotly_colors
+from views.segmentacion import DATA_PATH, cargar_datos, formatear_numero, formatear_porcentaje
 
-AUC_MODELO = 0.72
 COLUMNA_SCORE = "EXT_SOURCE_MEAN"
-N_PUNTOS_CURVA = 80
+N_CURVA = 120
+N_BINS_HIST = 35
+
+PRESETS = {
+    "Sin filtro": "min",
+    "Muy estricto": 0.10,
+    "Estricto": 0.25,
+    "Balanceado": 0.50,
+    "Conservador": 0.75,
+}
 
 
 @st.cache_data
-def preparar_simulacion() -> tuple[pd.DataFrame, float, float]:
+def preparar_simulacion() -> tuple[pd.DataFrame, float, float, float, float]:
     df = cargar_datos()[[COLUMNA_SCORE, "TARGET"]].dropna().copy()
     score_min = float(df[COLUMNA_SCORE].min())
     score_max = float(df[COLUMNA_SCORE].max())
-    return df, score_min, score_max
+    tasa_base = float(df["TARGET"].mean() * 100)
+    auc = calcular_auc_score(df)
+    return df, score_min, score_max, tasa_base, auc
 
 
-@st.cache_data
-def calcular_curva_tradeoff(_df_hash: str, score_min: float, score_max: float) -> pd.DataFrame:
-    df = cargar_datos()[[COLUMNA_SCORE, "TARGET"]].dropna()
-    umbrales = np.linspace(score_min, score_max, N_PUNTOS_CURVA)
+def calcular_auc_score(df: pd.DataFrame) -> float:
+    """AUC: mayor score → menor probabilidad de default."""
+    y = df["TARGET"].to_numpy()
+    scores = df[COLUMNA_SCORE].to_numpy()
+    n_pos = int(y.sum())
+    n_neg = len(y) - n_pos
+    if n_pos == 0 or n_neg == 0:
+        return 0.5
 
-    filas = []
-    for umbral in umbrales:
-        filas.append(_metricas_corte(df, float(umbral)))
-
-    curva = pd.DataFrame(filas)
-    curva["umbral"] = umbrales
-    return curva
+    order = np.argsort(scores)
+    y_sorted = y[order]
+    tpr = np.cumsum(y_sorted) / n_pos
+    fpr = np.cumsum(1 - y_sorted) / n_neg
+    return float(np.trapezoid(tpr, fpr))
 
 
-def _metricas_corte(df: pd.DataFrame, umbral: float) -> dict:
-    """Aprueba si EXT_SOURCE_MEAN >= umbral (mayor score = menor riesgo)."""
+def umbral_desde_preset(preset: str, df: pd.DataFrame, score_min: float) -> float:
+    spec = PRESETS[preset]
+    if spec == "min":
+        return score_min
+    return float(df[COLUMNA_SCORE].quantile(spec))
+
+
+def metricas_corte(df: pd.DataFrame, umbral: float) -> dict:
     aprobados = df[df[COLUMNA_SCORE] >= umbral]
     rechazados = df[df[COLUMNA_SCORE] < umbral]
 
@@ -45,47 +65,134 @@ def _metricas_corte(df: pd.DataFrame, umbral: float) -> dict:
     total_buenos = total - total_defaults
 
     n_aprobados = len(aprobados)
-    n_rechazados = len(rechazados)
     defaults_aprobados = int(aprobados["TARGET"].sum())
     defaults_rechazados = int(rechazados["TARGET"].sum())
-    buenos_rechazados = n_rechazados - defaults_rechazados
+    buenos_rechazados = len(rechazados) - defaults_rechazados
 
     pct_aprobada = n_aprobados / total * 100 if total else 0.0
-    tasa_default_aprobados = (
-        defaults_aprobados / n_aprobados * 100 if n_aprobados else 0.0
-    )
-    pct_defaults_evitados = (
-        defaults_rechazados / total_defaults * 100 if total_defaults else 0.0
-    )
-    pct_buenos_rechazados = (
-        buenos_rechazados / total_buenos * 100 if total_buenos else 0.0
-    )
+    tasa_aprobados = defaults_aprobados / n_aprobados * 100 if n_aprobados else 0.0
 
     return {
         "pct_cartera_aprobada": pct_aprobada,
-        "tasa_default_aprobados": tasa_default_aprobados,
-        "pct_defaults_evitados": pct_defaults_evitados,
-        "pct_buenos_rechazados": pct_buenos_rechazados,
+        "tasa_default_aprobados": tasa_aprobados,
+        "pct_defaults_evitados": defaults_rechazados / total_defaults * 100 if total_defaults else 0,
+        "pct_buenos_rechazados": buenos_rechazados / total_buenos * 100 if total_buenos else 0,
         "n_aprobados": n_aprobados,
-        "n_rechazados": n_rechazados,
+        "defaults_evitados": defaults_rechazados,
+        "total_defaults": total_defaults,
+        "buenos_rechazados": buenos_rechazados,
+        "delta_tasa_pp": tasa_aprobados - df["TARGET"].mean() * 100,
     }
 
 
-def crear_grafica_frontera(curva: pd.DataFrame, umbral_actual: float) -> go.Figure:
-    punto = curva.iloc[(curva["umbral"] - umbral_actual).abs().argmin()]
+@st.cache_data
+def curva_tradeoff_completa(_v: str, score_min: float, score_max: float) -> pd.DataFrame:
+    df = cargar_datos()[[COLUMNA_SCORE, "TARGET"]].dropna()
+    umbrales = np.linspace(score_min, score_max, N_CURVA)
+    filas = [metricas_corte(df, float(u)) for u in umbrales]
+    curva = pd.DataFrame(filas)
+    curva["umbral"] = umbrales
+    return curva
 
+
+def crear_histograma_corte(df: pd.DataFrame, umbral: float, score_min: float, score_max: float) -> go.Figure:
+    bins = np.linspace(score_min, score_max, N_BINS_HIST + 1)
+    df_hist = df.copy()
+    df_hist["bin"] = pd.cut(df_hist[COLUMNA_SCORE], bins=bins, include_lowest=True)
+
+    agrupado = df_hist.groupby("bin", observed=False).agg(
+        buenos=("TARGET", lambda s: (s == 0).sum()),
+        defaults=("TARGET", "sum"),
+    ).reset_index()
+
+    centros = [interval.mid for interval in agrupado["bin"]]
+    buenos = agrupado["buenos"].astype(float)
+    defaults = agrupado["defaults"].astype(float)
+
+    palette = plotly_colors()
     fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=centros,
+            y=buenos,
+            name="Buenos",
+            marker_color=color_rgba(palette["success"], 0.85),
+            hovertemplate="Score: %{x:.3f}<br>Buenos: %{y:,.0f}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=centros,
+            y=defaults,
+            name="Defaults",
+            marker_color=color_rgba(palette["accent"], 0.9),
+            hovertemplate="Score: %{x:.3f}<br>Defaults: %{y:,.0f}<extra></extra>",
+        )
+    )
+
+    colors = plotly_colors()
+    fig.update_layout(
+        barmode="stack",
+        height=380,
+        margin={"l": 10, "r": 10, "t": 40, "b": 10},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": colors["font"], "size": 12},
+        xaxis={
+            "title": "",
+            "gridcolor": colors["grid"],
+            "range": [score_min - 0.01, score_max + 0.01],
+        },
+        yaxis={"title": "Clientes", "gridcolor": colors["grid"]},
+        legend={"orientation": "h", "y": 1.12, "x": 0.5, "xanchor": "center"},
+    )
+
+    fig.add_vline(
+        x=umbral,
+        line_width=2,
+        line_dash="dash",
+        line_color=palette["accent"],
+        annotation_text=f"Corte {umbral:.3f}",
+        annotation_font_color=palette["accent"],
+        annotation_position="top",
+    )
+
+    fig.add_vrect(
+        x0=score_min - 0.01,
+        x1=umbral,
+        fillcolor=colors["reject_zone"],
+        line_width=0,
+        layer="below",
+    )
+
+    return fig
+
+
+def crear_curva_tradeoff(curva: pd.DataFrame, metricas: dict) -> go.Figure:
+    fig = go.Figure()
+
+    colors = plotly_colors()
+    fig.add_trace(
+        go.Scatter(
+            x=[0, 100],
+            y=[0, 100],
+            mode="lines",
+            line={"color": colors["muted_line"], "dash": "dash", "width": 1},
+            name="Azar",
+            hoverinfo="skip",
+        )
+    )
 
     fig.add_trace(
         go.Scatter(
-            x=curva["pct_cartera_aprobada"],
-            y=curva["tasa_default_aprobados"],
+            x=curva["pct_buenos_rechazados"],
+            y=curva["pct_defaults_evitados"],
             mode="lines",
-            name="Frontera de trade-off",
-            line={"color": "rgba(229, 57, 53, 0.5)", "width": 2, "dash": "dot"},
+            line={"color": colors["info"], "width": 3},
+            name="Trade-off",
             hovertemplate=(
-                "Aprobación: %{x:.1f}%<br>"
-                "Tasa default aprobados: %{y:.1f}%"
+                "Buenos rechazados: %{x:.1f}%<br>"
+                "Defaults evitados: %{y:.1f}%"
                 "<extra></extra>"
             ),
         )
@@ -93,18 +200,21 @@ def crear_grafica_frontera(curva: pd.DataFrame, umbral_actual: float) -> go.Figu
 
     fig.add_trace(
         go.Scatter(
-            x=[punto["pct_cartera_aprobada"]],
-            y=[punto["tasa_default_aprobados"]],
+            x=[metricas["pct_buenos_rechazados"]],
+            y=[metricas["pct_defaults_evitados"]],
             mode="markers+text",
-            name="Corte seleccionado",
-            marker={"size": 14, "color": "#e53935", "line": {"color": "#fff", "width": 2}},
-            text=[f"Umbral {umbral_actual:.3f}"],
+            marker={
+                "size": 16,
+                "color": colors["accent"],
+                "line": {"color": "#ffffff", "width": 2},
+            },
+            text=[f"Corte actual"],
             textposition="top center",
-            textfont={"color": "#ffffff", "size": 11},
+            textfont={"color": colors["font"], "size": 11},
+            name="Corte actual",
             hovertemplate=(
-                "Aprobación: %{x:.1f}%<br>"
-                "Tasa default: %{y:.1f}%<br>"
-                f"Umbral: {umbral_actual:.3f}"
+                "Buenos rechazados: %{x:.1f}%<br>"
+                "Defaults evitados: %{y:.1f}%"
                 "<extra></extra>"
             ),
         )
@@ -112,64 +222,35 @@ def crear_grafica_frontera(curva: pd.DataFrame, umbral_actual: float) -> go.Figu
 
     fig.update_layout(
         height=380,
-        margin={"l": 20, "r": 20, "t": 30, "b": 20},
+        margin={"l": 10, "r": 10, "t": 40, "b": 10},
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font={"color": "#9aa3af", "size": 12},
+        font={"color": colors["font"], "size": 12},
         xaxis={
-            "title": "% cartera aprobada",
-            "gridcolor": "rgba(255,255,255,0.08)",
-            "range": [0, 105],
+            "title": "% buenos rechazados",
+            "range": [-2, 102],
+            "gridcolor": colors["grid"],
         },
         yaxis={
-            "title": "Tasa de default en aprobados (%)",
-            "gridcolor": "rgba(255,255,255,0.08)",
+            "title": "% defaults evitados",
+            "range": [-2, 102],
+            "gridcolor": colors["grid"],
         },
-        legend={"orientation": "h", "y": -0.2, "x": 0.5, "xanchor": "center"},
+        legend={"orientation": "h", "y": 1.12, "x": 0.5, "xanchor": "center"},
     )
     return fig
 
 
-def crear_grafica_costos(curva: pd.DataFrame, umbral_actual: float) -> go.Figure:
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Scatter(
-            x=curva["umbral"],
-            y=curva["pct_defaults_evitados"],
-            mode="lines",
-            name="Defaults evitados",
-            line={"color": "#4caf50", "width": 2},
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=curva["umbral"],
-            y=curva["pct_buenos_rechazados"],
-            mode="lines",
-            name="Buenos clientes rechazados",
-            line={"color": "#ff9800", "width": 2},
-        )
-    )
-
-    fig.add_vline(
-        x=umbral_actual,
-        line_width=1,
-        line_dash="dash",
-        line_color="#e53935",
-    )
-
-    fig.update_layout(
-        height=320,
-        margin={"l": 20, "r": 20, "t": 20, "b": 20},
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font={"color": "#9aa3af", "size": 12},
-        xaxis={"title": "Umbral EXT_SOURCE_MEAN (aprobar si ≥)", "gridcolor": "rgba(255,255,255,0.08)"},
-        yaxis={"title": "%", "gridcolor": "rgba(255,255,255,0.08)", "range": [0, 105]},
-        legend={"orientation": "h", "y": -0.25, "x": 0.5, "xanchor": "center"},
-    )
-    return fig
+def _tarjeta_kpi(titulo: str, valor: str, subtitulo: str, color_valor: str | None = None) -> str:
+    if color_valor is None:
+        color_valor = plotly_colors()["text_primary"]
+    return f"""
+    <div class="v3-kpi">
+        <div class="v3-kpi-title">{titulo}</div>
+        <div class="v3-kpi-value" style="color:{color_valor};">{valor}</div>
+        <div class="v3-kpi-sub">{subtitulo}</div>
+    </div>
+    """
 
 
 def render_vista_3() -> None:
@@ -177,165 +258,147 @@ def render_vista_3() -> None:
         st.error(f"No se encontró el archivo de datos: {DATA_PATH.name}")
         return
 
-    df, score_min, score_max = preparar_simulacion()
-    tasa_sin_filtro = df["TARGET"].mean() * 100
+    df, score_min, score_max, tasa_base, auc = preparar_simulacion()
+    total_clientes = len(df)
 
-    col_controles, col_resultados = st.columns([1.1, 3.5], gap="medium")
+    if "v3_umbral" not in st.session_state:
+        st.session_state.v3_umbral = float(df[COLUMNA_SCORE].quantile(0.50))
+    if "v3_preset" not in st.session_state:
+        st.session_state.v3_preset = "Balanceado"
 
-    with col_controles:
-        with st.container(border=True):
-            render_html(
-                f"""
-                <div class="panel-title" style="margin-bottom:4px;">Simulador de corte</div>
-                <div class="panel-subtitle" style="margin:0 0 12px 0;">
-                    Regla: aprobar si EXT_SOURCE_MEAN ≥ umbral
+    render_html(
+        f"""
+        <div class="v3-header">
+            <div>
+                <div class="v3-title">Simulador de punto de corte</div>
+                <div class="v3-subtitle">
+                    Aprobar si score externo ≥ umbral · {formatear_numero(total_clientes)} clientes
+                    · tasa base {tasa_base:.2f}%
                 </div>
-                <div class="chart-footer" style="margin-bottom:12px;">
-                    ⓘ Modelo con AUC ≈ <strong style="color:#ff5252;">{AUC_MODELO:.2f}</strong>.
-                    Mayor score externo → menor riesgo observado.
-                </div>
-                """
-            )
+            </div>
+            <div class="v3-auc-box">
+                <div class="v3-auc-label">PODER DISCRIMINANTE</div>
+                <div class="v3-auc-value">AUC {auc:.3f}</div>
+            </div>
+        </div>
+        """
+    )
 
-            escenario = st.selectbox(
-                "Escenarios rápidos",
-                [
-                    "Personalizado (slider)",
-                    "Conservador (p75)",
-                    "Balanceado (p50)",
-                    "Agresivo (p25)",
-                    "Muy agresivo (p10)",
-                ],
-                index=1,
-                key="v3_escenario",
-            )
+    cols_preset = st.columns(len(PRESETS))
+    preset_actual = st.session_state.v3_preset
 
-            if escenario == "Personalizado (slider)":
-                umbral = st.slider(
-                    "Umbral de aprobación (EXT_SOURCE_MEAN)",
-                    min_value=score_min,
-                    max_value=score_max,
-                    value=float(np.quantile(df[COLUMNA_SCORE], 0.50)),
-                    step=0.01,
-                    format="%.3f",
-                    key="v3_umbral",
-                    help="Solo se aprueban solicitudes con score ≥ umbral.",
-                )
-            else:
-                quantil = {
-                    "Conservador (p75)": 0.75,
-                    "Balanceado (p50)": 0.50,
-                    "Agresivo (p25)": 0.25,
-                    "Muy agresivo (p10)": 0.10,
-                }[escenario]
-                umbral = float(df[COLUMNA_SCORE].quantile(quantil))
-                st.metric("Umbral del escenario", f"{umbral:.3f}")
+    for col, nombre in zip(cols_preset, PRESETS.keys()):
+        with col:
+            if st.button(
+                nombre,
+                use_container_width=True,
+                type="primary" if nombre == preset_actual else "secondary",
+                key=f"v3_btn_{nombre}",
+            ):
+                st.session_state.v3_preset = nombre
+                st.session_state.v3_umbral = umbral_desde_preset(nombre, df, score_min)
+                st.rerun()
 
-            st.caption(f"Rango histórico: {score_min:.3f} – {score_max:.3f}")
-
-        with st.container(border=True):
-            render_html('<div class="panel-title">Sin filtro (baseline)</div>')
-            st.metric("Cartera aprobada", "100%")
-            st.metric("Tasa default", formatear_porcentaje(tasa_sin_filtro))
-
-    metricas = _metricas_corte(df, umbral)
-    curva = calcular_curva_tradeoff("v1", score_min, score_max)
-
-    with col_resultados:
+    col_slider, col_corte = st.columns([5, 1])
+    with col_slider:
+        umbral = st.slider(
+            "Umbral EXT_SOURCE_MEAN (aprobar si ≥)",
+            min_value=score_min,
+            max_value=score_max,
+            value=float(st.session_state.v3_umbral),
+            step=0.005,
+            format="%.3f",
+            key="v3_slider",
+            label_visibility="collapsed",
+        )
+    with col_corte:
         render_html(
-            """
-            <div class="panel-title" style="margin-bottom:8px;">
-                Trade-off del corte seleccionado
+            f"""
+            <div class="v3-corte-box">
+                <div class="v3-corte-label">CORTE</div>
+                <div class="v3-corte-value">{umbral:.3f}</div>
             </div>
             """
         )
 
-        k1, k2, k3, k4 = st.columns(4)
-        with k1:
-            st.metric(
-                "% cartera aprobada",
-                formatear_porcentaje(metricas["pct_cartera_aprobada"]),
-                help="Volumen de negocio que sigue en cartera.",
-            )
-        with k2:
-            st.metric(
-                "Tasa default (aprobados)",
-                formatear_porcentaje(metricas["tasa_default_aprobados"]),
-                delta=f"{metricas['tasa_default_aprobados'] - tasa_sin_filtro:+.1f} pp vs baseline",
-                delta_color="inverse",
-                help="Riesgo esperado de la cartera que apruebas.",
-            )
-        with k3:
-            st.metric(
-                "% defaults evitados",
-                formatear_porcentaje(metricas["pct_defaults_evitados"]),
-                help="Incumplimientos que rechazas del total histórico.",
-            )
-        with k4:
-            st.metric(
-                "% buenos rechazados",
-                formatear_porcentaje(metricas["pct_buenos_rechazados"]),
-                delta_color="inverse",
-                help="Clientes sanos que pierdes por el filtro.",
-            )
+    st.session_state.v3_umbral = umbral
+    metricas = metricas_corte(df, umbral)
+    curva = curva_tradeoff_completa("v1", score_min, score_max)
 
-        with st.container(border=True):
-            render_html(
-                '<div class="panel-subtitle" style="margin:0 0 8px 0;">'
-                "Frontera aprobación vs riesgo"
-                "</div>"
-            )
-            st.plotly_chart(
-                crear_grafica_frontera(curva, umbral),
-                use_container_width=True,
-                config={"displayModeBar": False},
-            )
+    palette = plotly_colors()
+    delta_pct = metricas["delta_tasa_pp"] / tasa_base * 100 if tasa_base else 0
+    color_tasa = palette["success"]
+    if metricas["tasa_default_aprobados"] >= tasa_base:
+        color_tasa = palette["warning"]
+    if metricas["tasa_default_aprobados"] > tasa_base * 1.05:
+        color_tasa = palette["accent"]
 
-        with st.container(border=True):
-            render_html(
-                '<div class="panel-subtitle" style="margin:0 0 8px 0;">'
-                "Costo del filtro: defaults evitados vs buenos rechazados"
-                "</div>"
-            )
-            st.plotly_chart(
-                crear_grafica_costos(curva, umbral),
-                use_container_width=True,
-                config={"displayModeBar": False},
-            )
-
-        with st.expander("Tabla de escenarios (distintas opciones para comité)"):
-            escenarios_umbral = {
-                "Muy agresivo (p10)": df[COLUMNA_SCORE].quantile(0.10),
-                "Agresivo (p25)": df[COLUMNA_SCORE].quantile(0.25),
-                "Balanceado (p50)": df[COLUMNA_SCORE].quantile(0.50),
-                "Conservador (p75)": df[COLUMNA_SCORE].quantile(0.75),
-                "Actual (slider)": umbral,
-            }
-
-            tabla = []
-            for nombre, u in escenarios_umbral.items():
-                m = _metricas_corte(df, float(u))
-                tabla.append(
-                    {
-                        "Escenario": nombre,
-                        "Umbral": round(float(u), 3),
-                        "% Aprobada": round(m["pct_cartera_aprobada"], 1),
-                        "Tasa default aprob. (%)": round(m["tasa_default_aprobados"], 2),
-                        "% Defaults evitados": round(m["pct_defaults_evitados"], 1),
-                        "% Buenos rechazados": round(m["pct_buenos_rechazados"], 1),
-                    }
-                )
-
-            st.dataframe(pd.DataFrame(tabla), use_container_width=True, hide_index=True)
-
+    k1, k2, k3, k4 = st.columns(4)
+    with k1:
         render_html(
-            f"""
-            <div class="chart-footer">
-                ⓘ &nbsp; Con umbral <strong style="color:#ffffff;">{umbral:.3f}</strong>
-                apruebas <strong>{metricas['n_aprobados']:,}</strong> solicitudes
-                y rechazas <strong>{metricas['n_rechazados']:,}</strong>.
-                Es la vista para comparar <strong style="color:#ff5252;">opciones puras</strong>
-                ante un comité: más aprobación suele implicar más riesgo y menos buenos perdidos.
+            _tarjeta_kpi(
+                "% cartera aprobada",
+                f"{metricas['pct_cartera_aprobada']:.1f}%",
+                f"{formatear_numero(metricas['n_aprobados'])} clientes",
+            )
+        )
+    with k2:
+        render_html(
+            _tarjeta_kpi(
+                "Tasa default aprobados",
+                f"{metricas['tasa_default_aprobados']:.2f}%",
+                f"{delta_pct:+.0f}% vs base {tasa_base:.2f}%",
+                color_tasa,
+            )
+        )
+    with k3:
+        render_html(
+            _tarjeta_kpi(
+                "% defaults evitados",
+                f"{metricas['pct_defaults_evitados']:.1f}%",
+                f"{formatear_numero(metricas['defaults_evitados'])} de "
+                f"{formatear_numero(metricas['total_defaults'])} defaults",
+                palette["success"],
+            )
+        )
+    with k4:
+        render_html(
+            _tarjeta_kpi(
+                "% buenos rechazados",
+                f"{metricas['pct_buenos_rechazados']:.1f}%",
+                f"{formatear_numero(metricas['buenos_rechazados'])} buenos perdidos",
+                palette["warning"],
+            )
+        )
+
+    col_hist, col_curva = st.columns(2)
+
+    with col_hist:
+        render_html(
+            """
+            <div class="v3-chart-title">Dónde cae el corte</div>
+            <div class="v3-chart-sub">
+                Distribución del score · zona gris = rechazados · rojo = defaults
             </div>
-            """.replace(",", ".")
+            """
+        )
+        st.plotly_chart(
+            crear_histograma_corte(df, umbral, score_min, score_max),
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
+
+    with col_curva:
+        render_html(
+            """
+            <div class="v3-chart-title">Curva de trade-off</div>
+            <div class="v3-chart-sub">
+                Defaults evitados vs buenos sacrificados · punto = corte actual
+            </div>
+            """
+        )
+        st.plotly_chart(
+            crear_curva_tradeoff(curva, metricas),
+            use_container_width=True,
+            config={"displayModeBar": False},
         )
