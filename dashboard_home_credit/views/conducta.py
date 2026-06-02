@@ -253,8 +253,6 @@ def _celda_html(
     <div class="v2-celda" style="background:{fondo}; border-color:{_hex_a_rgba(color, 0.45)};"
          title="{html.escape(tooltip)}">
         <div class="v2-celda-tasa" style="color:{color};">{tasa_pct:.1f}%</div>
-        <div class="v2-celda-lift" style="color:{color};">{lift:.2f}×</div>
-        <div class="v2-celda-n">{_fmt_clientes_celda(total)}</div>
     </div>
     """
 

@@ -77,7 +77,7 @@ def render_placeholder(view_number: str, title: str) -> None:
 active_view = str(st.query_params.get("view", "1"))
 active_view = render_view_tabs(active_view)
 
-if active_view != "4":
+if active_view not in ("3", "4"):
     render_indicadores_clave()
 
 render_view = VIEW_RENDERERS.get(active_view, render_vista_1)

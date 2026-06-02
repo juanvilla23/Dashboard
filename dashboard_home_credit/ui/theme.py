@@ -17,19 +17,23 @@ THEMES = ("dark", "light")
 PLOTLY_THEME_COLORS = {
     "dark": {
         "font": "#9aa3af",
+        "text_primary": "#e8eaed",
+        "bar_label": "#c6ced8",
         "grid": "rgba(255, 255, 255, 0.08)",
         "line": "rgba(255, 255, 255, 0.12)",
-        "ref_line": "rgba(255, 255, 255, 0.75)",
+        "ref_line": "#ffffff",
         "annotation_text": "#e0e0e0",
         "annotation_bg": "rgba(26, 26, 26, 0.85)",
         "paper": "rgba(0,0,0,0)",
         "plot": "rgba(0,0,0,0)",
     },
     "light": {
-        "font": "#5F5E5A",
+        "font": "#2C2C2A",
+        "text_primary": "#2C2C2A",
+        "bar_label": "#2C2C2A",
         "grid": "rgba(0, 0, 0, 0.08)",
         "line": "rgba(0, 0, 0, 0.12)",
-        "ref_line": "rgba(44, 44, 42, 0.45)",
+        "ref_line": "#2C2C2A",
         "annotation_text": "#2C2C2A",
         "annotation_bg": "rgba(255, 255, 255, 0.94)",
         "paper": "rgba(0,0,0,0)",
@@ -133,27 +137,70 @@ def render_theme_runtime() -> None:
                 }}
             }}
 
+            function axisFontPatches(layout, p, patch) {{
+                if (!layout) return;
+                Object.keys(layout).forEach((key) => {{
+                    if (!/^xaxis|yaxis/.test(key)) return;
+                    patch[`${{key}}.tickfont.color`] = p.font;
+                    patch[`${{key}}.title.font.color`] = p.font;
+                    patch[`${{key}}.gridcolor`] = p.grid;
+                    patch[`${{key}}.linecolor`] = p.line;
+                }});
+            }}
+
             function plotlyRelayout(theme) {{
                 const doc = parentDoc();
                 const Plotly = window.parent.Plotly || window.Plotly;
                 if (!Plotly) return;
                 const p = PLOTLY_PALETTES[theme] || PLOTLY_PALETTES.dark;
-                const layoutPatch = {{
-                    paper_bgcolor: p.paper,
-                    plot_bgcolor: p.plot,
-                    "font.color": p.font,
-                    "xaxis.gridcolor": p.grid,
-                    "yaxis.gridcolor": p.grid,
-                    "xaxis.linecolor": p.line,
-                    "yaxis.linecolor": p.line,
-                    "xaxis.tickfont.color": p.font,
-                    "yaxis.tickfont.color": p.font,
-                    "xaxis.title.font.color": p.font,
-                    "yaxis.title.font.color": p.font,
-                }};
+                const labelColor = p.text_primary || p.font;
                 doc.querySelectorAll(".js-plotly-plot").forEach((plot) => {{
                     try {{
+                        const layoutPatch = {{
+                            paper_bgcolor: p.paper,
+                            plot_bgcolor: p.plot,
+                            "font.color": p.font,
+                            "legend.font.color": labelColor,
+                            "xaxis.gridcolor": p.grid,
+                            "yaxis.gridcolor": p.grid,
+                            "xaxis.linecolor": p.line,
+                            "yaxis.linecolor": p.line,
+                            "xaxis.tickfont.color": p.font,
+                            "yaxis.tickfont.color": p.font,
+                            "xaxis.title.font.color": p.font,
+                            "yaxis.title.font.color": p.font,
+                        }};
+                        axisFontPatches(plot.layout, p, layoutPatch);
+                        const shapes = (plot.layout && plot.layout.shapes) || [];
+                        shapes.forEach((shape, i) => {{
+                            if (shape.type === "line" && shape.line) {{
+                                layoutPatch[`shapes[${{i}}].line.color`] = p.ref_line;
+                            }}
+                        }});
+                        const annotations = (plot.layout && plot.layout.annotations) || [];
+                        annotations.forEach((ann, i) => {{
+                            layoutPatch[`annotations[${{i}}].font.color`] = p.annotation_text;
+                            layoutPatch[`annotations[${{i}}].bgcolor`] = p.annotation_bg;
+                        }});
                         Plotly.relayout(plot, layoutPatch);
+
+                        const data = plot.data || [];
+                        const textTraceIdx = [];
+                        const barTextIdx = [];
+                        data.forEach((trace, i) => {{
+                            if (trace.text) textTraceIdx.push(i);
+                            if (trace.textposition === "outside") barTextIdx.push(i);
+                        }});
+                        if (textTraceIdx.length) {{
+                            Plotly.restyle(plot, {{ "textfont.color": labelColor }}, textTraceIdx);
+                        }}
+                        if (barTextIdx.length) {{
+                            Plotly.restyle(
+                                plot,
+                                {{ "textfont.color": p.bar_label || labelColor }},
+                                barTextIdx
+                            );
+                        }}
                     }} catch (e) {{}}
                 }});
             }}

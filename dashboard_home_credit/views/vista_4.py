@@ -253,15 +253,6 @@ def render_vista_4() -> None:
     stats = segment_stats(filtered)
 
     with col_main:
-        render_html(
-            """
-            <div class="panel-title" style="margin-bottom:4px;">Perfilador de riesgo</div>
-            <div class="panel-subtitle" style="margin:0 0 10px 0;">
-                ¿Qué combinación de atributos concentra impago distinto de la base?
-            </div>
-            """
-        )
-
         _render_warnings(stats, selection)
 
         if stats["n"] > 0:

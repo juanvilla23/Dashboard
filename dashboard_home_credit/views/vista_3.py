@@ -7,7 +7,7 @@ from plotly.subplots import make_subplots
 import streamlit as st
 
 from ui.render import render_html
-from ui.theme import color_rgba, plotly_colors
+from ui.theme import color_rgba, get_theme, plotly_colors
 from views.segmentacion import DATA_PATH, cargar_datos, formatear_numero, formatear_porcentaje
 
 COLUMNA_SCORE = "EXT_SOURCE_MEAN"
@@ -131,7 +131,9 @@ def crear_histograma_corte(df: pd.DataFrame, umbral: float, score_min: float, sc
     )
 
     colors = plotly_colors()
+    plotly_tpl = "plotly_white" if get_theme() == "light" else "plotly_dark"
     fig.update_layout(
+        template=plotly_tpl,
         barmode="stack",
         height=380,
         margin={"l": 10, "r": 10, "t": 40, "b": 10},
@@ -144,16 +146,23 @@ def crear_histograma_corte(df: pd.DataFrame, umbral: float, score_min: float, sc
             "range": [score_min - 0.01, score_max + 0.01],
         },
         yaxis={"title": "Clientes", "gridcolor": colors["grid"]},
-        legend={"orientation": "h", "y": 1.12, "x": 0.5, "xanchor": "center"},
+        legend={
+            "orientation": "h",
+            "y": 1.12,
+            "x": 0.5,
+            "xanchor": "center",
+            "font": {"color": colors["text_primary"], "size": 12},
+        },
     )
 
     fig.add_vline(
         x=umbral,
         line_width=2,
         line_dash="dash",
-        line_color=palette["accent"],
+        line_color=colors["ref_line"],
         annotation_text=f"Corte {umbral:.3f}",
-        annotation_font_color=palette["accent"],
+        annotation_font_color=colors["annotation_text"],
+        annotation_bgcolor=colors["annotation_bg"],
         annotation_position="top",
     )
 
@@ -206,11 +215,11 @@ def crear_curva_tradeoff(curva: pd.DataFrame, metricas: dict) -> go.Figure:
             marker={
                 "size": 16,
                 "color": colors["accent"],
-                "line": {"color": "#ffffff", "width": 2},
+                "line": {"color": colors["text_primary"], "width": 2},
             },
             text=[f"Corte actual"],
             textposition="top center",
-            textfont={"color": colors["font"], "size": 11},
+            textfont={"color": colors["text_primary"], "size": 11},
             name="Corte actual",
             hovertemplate=(
                 "Buenos rechazados: %{x:.1f}%<br>"
@@ -220,7 +229,9 @@ def crear_curva_tradeoff(curva: pd.DataFrame, metricas: dict) -> go.Figure:
         )
     )
 
+    plotly_tpl = "plotly_white" if get_theme() == "light" else "plotly_dark"
     fig.update_layout(
+        template=plotly_tpl,
         height=380,
         margin={"l": 10, "r": 10, "t": 40, "b": 10},
         paper_bgcolor="rgba(0,0,0,0)",
@@ -236,7 +247,13 @@ def crear_curva_tradeoff(curva: pd.DataFrame, metricas: dict) -> go.Figure:
             "range": [-2, 102],
             "gridcolor": colors["grid"],
         },
-        legend={"orientation": "h", "y": 1.12, "x": 0.5, "xanchor": "center"},
+        legend={
+            "orientation": "h",
+            "y": 1.12,
+            "x": 0.5,
+            "xanchor": "center",
+            "font": {"color": colors["text_primary"], "size": 12},
+        },
     )
     return fig
 
@@ -258,31 +275,12 @@ def render_vista_3() -> None:
         st.error(f"No se encontró el archivo de datos: {DATA_PATH.name}")
         return
 
-    df, score_min, score_max, tasa_base, auc = preparar_simulacion()
-    total_clientes = len(df)
+    df, score_min, score_max, tasa_base, _ = preparar_simulacion()
 
     if "v3_umbral" not in st.session_state:
         st.session_state.v3_umbral = float(df[COLUMNA_SCORE].quantile(0.50))
     if "v3_preset" not in st.session_state:
         st.session_state.v3_preset = "Balanceado"
-
-    render_html(
-        f"""
-        <div class="v3-header">
-            <div>
-                <div class="v3-title">Simulador de punto de corte</div>
-                <div class="v3-subtitle">
-                    Aprobar si score externo ≥ umbral · {formatear_numero(total_clientes)} clientes
-                    · tasa base {tasa_base:.2f}%
-                </div>
-            </div>
-            <div class="v3-auc-box">
-                <div class="v3-auc-label">PODER DISCRIMINANTE</div>
-                <div class="v3-auc-value">AUC {auc:.3f}</div>
-            </div>
-        </div>
-        """
-    )
 
     cols_preset = st.columns(len(PRESETS))
     preset_actual = st.session_state.v3_preset
